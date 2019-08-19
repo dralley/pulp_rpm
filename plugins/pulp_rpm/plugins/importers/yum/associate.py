@@ -5,11 +5,11 @@ import mongoengine
 import os
 from pulp.plugins.util.misc import paginate
 from pulp.server.controllers import repository as repo_controller
+from pulp.server.db import model as server_models
 from pulp.server.exceptions import PulpCodedException
 
 from pulp_rpm.common import constants, ids
 from pulp_rpm.plugins.db import models
-from pulp_rpm.plugins.importers.yum import pulp_solv
 from pulp_rpm.plugins.importers.yum import existing
 from pulp_rpm.plugins.importers.yum.parse import rpm as rpm_parse
 
@@ -17,7 +17,7 @@ from pulp_rpm.plugins.importers.yum.parse import rpm as rpm_parse
 _LOGGER = logging.getLogger(__name__)
 
 
-def associate(source_repo, dest_repo, import_conduit, config, units=None, solver=None):
+def associate(source_repo, dest_repo, import_conduit, config, units=None):
     """
     This is the primary method to call when a copy operation is desired. This
     gets called directly by the Importer
@@ -39,8 +39,6 @@ def associate(source_repo, dest_repo, import_conduit, config, units=None, solver
 
     :param units:           generator of ContentUnit objects to copy
     :type  units:           generator
-    :param solver:          a solver instance shared during a recursive call
-    :type solver:           pulp_solv.Solver
 
     :return:                List of associated units.
     """
@@ -49,23 +47,8 @@ def associate(source_repo, dest_repo, import_conduit, config, units=None, solver
         # TODO: so we should probably do something about that
         units = repo_controller.find_repo_content_units(source_repo, yield_content_unit=True)
 
-    # get config items that we care about
     recursive = config.get(constants.CONFIG_RECURSIVE) or \
         config.get(constants.CONFIG_RECURSIVE_CONSERVATIVE)
-
-    if recursive and not solver:
-        solver = pulp_solv.Solver(
-            source_repo,
-            target_repo=dest_repo,
-            conservative=config.get(constants.CONFIG_RECURSIVE_CONSERVATIVE),
-            ignore_missing=False
-            # the line above disables the code which injects "dummy solvables" to provide
-            # missing packages. it is not known whether that code is 100% necessary, but it
-            # is feeding invalid data to libsolv somehow resulting in a violated invariant
-            # and failure on an assert statement here
-            # https://github.com/openSUSE/libsolv/blob/master/src/solver.c#L1979-L1981
-        )
-        solver.load()
 
     # make a set from generator to be able to iterate through it several times
     units = set(units)
@@ -80,11 +63,9 @@ def associate(source_repo, dest_repo, import_conduit, config, units=None, solver
     associated_units = set(associated_units)
 
     associated_units |= copy_rpms(
-        (
-            unit for unit in units
-            if unit._content_type_id in (ids.TYPE_ID_RPM, ids.TYPE_ID_MODULEMD)
-        ),
-        source_repo, dest_repo, import_conduit, config, solver)
+        [unit for unit in units if unit._content_type_id == ids.TYPE_ID_RPM],
+        source_repo, dest_repo, import_conduit, config
+    )
 
     # return here if we shouldn't get child units
     if not recursive:
@@ -95,8 +76,7 @@ def associate(source_repo, dest_repo, import_conduit, config, units=None, solver
         wanted_rpms = get_rpms_to_copy_by_key(rpm_search_dicts, import_conduit, source_repo)
         rpm_search_dicts = None
         rpms_to_copy = filter_available_rpms(wanted_rpms, import_conduit, source_repo)
-        associated_units |= copy_rpms(rpms_to_copy, source_repo, dest_repo, import_conduit, config,
-                                      solver)
+        associated_units |= copy_rpms(rpms_to_copy, source_repo, dest_repo, import_conduit, config)
         rpms_to_copy = None
 
         failed_units = units - associated_units
@@ -115,8 +95,7 @@ def associate(source_repo, dest_repo, import_conduit, config, units=None, solver
                                                          package_group_id__in=page)
         if group_units.count() > 0:
             tmp_associated_units, tmp_failed_units = (
-                associate(source_repo, dest_repo, import_conduit, config, group_units,
-                          solver=solver))
+                associate(source_repo, dest_repo, import_conduit, config, group_units))
             associated_units |= tmp_associated_units
             failed_units |= tmp_failed_units
 
@@ -124,8 +103,7 @@ def associate(source_repo, dest_repo, import_conduit, config, units=None, solver
     wanted_rpms = get_rpms_to_copy_by_key(rpm_search_dicts, import_conduit, source_repo)
     rpm_search_dicts = None
     rpms_to_copy = filter_available_rpms(wanted_rpms, import_conduit, source_repo)
-    associated_units |= copy_rpms(rpms_to_copy, source_repo, dest_repo, import_conduit, config,
-                                  solver)
+    associated_units |= copy_rpms(rpms_to_copy, source_repo, dest_repo, import_conduit, config)
     rpms_to_copy = None
 
     # ------ get Module children of Errata ------
@@ -142,7 +120,7 @@ def associate(source_repo, dest_repo, import_conduit, config, units=None, solver
     # ------ get RPM children of groups ------
     names_to_copy = get_rpms_to_copy_by_name(rpm_names, import_conduit, dest_repo)
     associated_units |= copy_rpms_by_name(names_to_copy, source_repo, dest_repo,
-                                          import_conduit, config, solver)
+                                          import_conduit, config)
 
     failed_units |= units - associated_units
 
@@ -232,12 +210,9 @@ def filter_available_rpms(rpms, import_conduit, repo):
                                        models.RPM, repo)
 
 
-def copy_rpms(units, source_repo, dest_repo, import_conduit, config, solver=None):
+def copy_rpms(units, source_repo, dest_repo, import_conduit, config):
     """
-    Copy RPMs (and modules) from the source repo to the destination repo,
-    and optionally copy dependencies as well.
-
-    Even though this function is named "copy_rpms", it accepts modules too.
+    Copy RPMs from the source repo to the destination repo.
 
     :param units:           iterable of Units
     :type  units:           iterable of pulp_rpm.plugins.db.models.RPM
@@ -249,11 +224,7 @@ def copy_rpms(units, source_repo, dest_repo, import_conduit, config, solver=None
     :type  import_conduit:  pulp.plugins.conduits.unit_import.ImportUnitConduit
     :param config:          configuration instance passed to the importer of the destination repo
     :type  config:          pulp.plugins.config.PluginCallConfiguration
-    :param solver:          if not None, it is used to resolve dependencies as specified in
-                            "Requires" lines in the RPM metadata.
 
-    :type solver: pulp_solv.Solver
-    :return:    set of pulp.plugins.models.Unit that were copied
     :rtype:     set
     """
     if not isinstance(units, set):
@@ -261,18 +232,11 @@ def copy_rpms(units, source_repo, dest_repo, import_conduit, config, solver=None
     else:
         unit_set = units
 
-    if solver:
-        # This returns units that have a flattened 'provides' metadata field
-        # for memory purposes (RHBZ #1185868)
-        repo_unit_set = solver.find_dependent_rpms(unit_set)
-        for repo, units in repo_unit_set.items():
-            unit_set |= units
-
     failed_signature_check = 0
     for unit in unit_set.copy():
         # we are passing in units that may have flattened "provides" metadata.
         # This flattened field is not used by associate_single_unit().
-        if unit._content_type_id == ids.TYPE_ID_RPM and rpm_parse.signature_enabled(config):
+        if rpm_parse.signature_enabled(config):
             if unit.downloaded:
                 try:
                     rpm_parse.filter_signature(unit, config)
@@ -318,7 +282,7 @@ def _no_checksum_clean_unit_key(unit_tuple):
     return ret
 
 
-def copy_rpms_by_name(names, source_repo, dest_repo, import_conduit, config, solver=None):
+def copy_rpms_by_name(names, source_repo, dest_repo, import_conduit, config):
     """
     Copy RPMs from source repo to destination repo by name
 
@@ -330,8 +294,6 @@ def copy_rpms_by_name(names, source_repo, dest_repo, import_conduit, config, sol
     :type dest_repo: pulp.server.db.model.Repository
     :param import_conduit:  import conduit passed to the Importer
     :type  import_conduit:  pulp.plugins.conduits.unit_import.ImportUnitConduit
-    :param solver: a dependency solver instance passed down to copy_rpms
-    :type solver: pulp_solv.Solver
 
     :return:    set of pulp.plugins.model.Unit that were copied
     :rtype:     set
@@ -343,7 +305,7 @@ def copy_rpms_by_name(names, source_repo, dest_repo, import_conduit, config, sol
                                                     unit_fields=models.RPM.unit_key_fields,
                                                     yield_content_unit=True)
 
-    return copy_rpms(units, source_repo, dest_repo, import_conduit, config, solver=solver)
+    return copy_rpms(units, source_repo, dest_repo, import_conduit, config)
 
 
 def identify_children_to_copy(units, parent_type=None):

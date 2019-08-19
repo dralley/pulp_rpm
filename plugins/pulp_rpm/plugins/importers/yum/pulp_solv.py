@@ -281,12 +281,12 @@ def rpm_dependency_conversion(solvable, unit, attr_name, dependency_key=None):
     where the evr is the 'epoch:version-release' string. The relationship
     is then recorded on the solvable explicitly by:
 
-        solvable.add_deparray(solv.SOLVABLE_PROVIDES, relationship)
+        solvable.add_deparray(solv.SOLVABLE_REQUIRES, relationship)
 
     If no explict relationship is provided in the flags attribute,
     the dependency can be used directly:
 
-        solvable.add_deparray(solv.SOLVABLE_PROVIDES, dependency)
+        solvable.add_deparray(solv.SOLVABLE_REQUIRES, dependency)
 
     :param solvable: a libsolv solvable object
     :type solv.Solvable: a libsolv solvable
@@ -771,7 +771,7 @@ class Solver(object):
         """
         units = fetch_units_from_repo(repo_id)
         self.add_repo_units(units, repo_id)
-        _LOGGER.info('Loaded repository %s', repo_id)
+        _LOGGER.debug('Loaded repository %s', repo_id)
 
     def load_target_repo(self, repo_id):
         """Load the provided Pulp repo into the combined target repo.
@@ -781,7 +781,7 @@ class Solver(object):
         """
         units = fetch_units_from_repo(repo_id)
         self.add_repo_units(units, repo_id, override_repo_name=COMBINED_TARGET_REPO_NAME)
-        _LOGGER.info('Loaded repository %s into combined target repo' % str(repo_id))
+        _LOGGER.debug('Loaded repository %s into combined target repo' % str(repo_id))
 
     def add_repo_units(self, units, repo_id, override_repo_name=None):
         """Generate solvables from Pulp units and add them to the mapping.
@@ -1033,7 +1033,7 @@ class Solver(object):
 
         targets = self.mapping.get_repo_units(self.primary_target_repo.repo_id)
         for target_repo in self._additional_repo_mapping.values():
-            targets.extend(self.mapping.get_repo_units(target_repo))
+            targets |= self.mapping.get_repo_units(target_repo)
 
         return [s for s in seen if self.mapping.get_unit_id(s)[0] not in targets]
 
