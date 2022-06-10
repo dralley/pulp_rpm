@@ -223,7 +223,7 @@ class RpmRepositoryViewSet(RepositoryViewSet, ModifyRepositoryActionMixin, Roles
                 "Cannot use '{}' in combination with a 'mirror_complete' or "
                 "'mirror_content_only' sync policy."
             )
-            if repository.retain_package_versions > 0:
+            if repository.retain_package_versions:
                 raise DRFValidationError(err_msg.format("retain_package_versions"))
 
         if sync_policy == SYNC_POLICIES.MIRROR_COMPLETE:

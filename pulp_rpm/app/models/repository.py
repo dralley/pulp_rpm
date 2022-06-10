@@ -4,8 +4,9 @@ from gettext import gettext as _
 from logging import getLogger
 
 from aiohttp.web_response import Response
-from django.core.exceptions import ObjectDoesNotExist
 from django.conf import settings
+from django.core.exceptions import ObjectDoesNotExist
+from django.core.validators import MinValueValidator
 from django.db import models
 from pulpcore.plugin.download import DownloaderFactory
 from pulpcore.plugin.models import (
@@ -224,7 +225,7 @@ class RpmRepository(Repository, AutoAddObjPermsMixin):
     )
     original_checksum_types = models.JSONField(default=dict)
     last_sync_details = models.JSONField(default=dict)
-    retain_package_versions = models.PositiveIntegerField(default=0)
+    retain_package_versions = models.PositiveIntegerField(null=True, validators=[MinValueValidator(1)])
 
     autopublish = models.BooleanField(default=False)
     metadata_checksum_type = models.TextField(null=True, choices=CHECKSUM_CHOICES)
@@ -352,7 +353,7 @@ class RpmRepository(Repository, AutoAddObjPermsMixin):
     def _apply_retention_policy(self, new_version):
         """Apply the repository's "retain_package_versions" settings to the new version.
 
-        Remove all non-modular packages that are older than the retention policy. A value of 0
+        Remove all non-modular packages that are older than the retention policy. A value of null
         for the package retention policy represents disabled. A value of 3 would mean that the
         3 most recent versions of each package would be kept while older versions are discarded.
 
@@ -363,7 +364,7 @@ class RpmRepository(Repository, AutoAddObjPermsMixin):
             not new_version.complete
         ), "Cannot apply retention policy to completed repository versions"
 
-        if self.retain_package_versions > 0:
+        if self.retain_package_versions:
             # It would be more ideal if, instead of annotating with an age and filtering manually,
             # we could use Django to filter the particular Package content we want to delete.
             # Something like ".filter(F('age') > self.retain_package_versions)" would be better

@@ -155,7 +155,7 @@ retain package policy is set on the "dest_repo"
    Retain package policy is set by `retain_package_versions` option.
    When set, it identifies the maximum number of versions of each package to keep; as new versions of
    packages are added by upload, sync, or copy, older versions of the same packages are automatically
-   removed. A value of 0 means "unlimited" and will keep all versions of each package.
+   removed. A value of 'null' means "unlimited" and will keep all versions of each package.
 
 Create a new repository version in "dest_repo" containing the two "content" units specified by href,
 which are present in the "source_repo_version".

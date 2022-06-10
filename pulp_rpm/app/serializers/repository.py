@@ -60,11 +60,12 @@ class RpmRepositorySerializer(RepositorySerializer):
     retain_package_versions = serializers.IntegerField(
         help_text=_(
             "The number of versions of each package to keep in the repository; "
-            "older versions will be purged. The default is '0', which will disable "
+            "older versions will be purged. The default is 'null', which will disable "
             "this feature and keep all versions of each package."
         ),
-        min_value=0,
+        min_value=1,
         required=False,
+        allow_null=True,
     )
     metadata_checksum_type = serializers.ChoiceField(
         help_text=_("The checksum type for metadata."),

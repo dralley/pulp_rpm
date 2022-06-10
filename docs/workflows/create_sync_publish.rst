@@ -37,7 +37,7 @@ RPM Repositories support several additional options.
 - metadata_signing_service:
     See :ref:`metadata_signing`.
 - retain_package_versions:
-    The maximum number of versions of each package to keep; as new versions of packages are added by upload, sync, or copy, older versions of the same packages are automatically removed. A value of 0 means "unlimited".
+    The maximum number of versions of each package to keep; as new versions of packages are added by upload, sync, or copy, older versions of the same packages are automatically removed. A value of 'null' means "unlimited".
 
 .. _create-remote:
 
