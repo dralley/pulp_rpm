@@ -635,6 +635,18 @@ class RpmDistribution(Distribution, AutoAddObjPermsMixin):
                 )
             except ObjectDoesNotExist:
                 pass
+        elif self.repository_version:
+            repository = self.repository_version.repository.cast()
+            try:
+                publication = (
+                    Publication.objects.filter(
+                        repository_version=self.repository_version, complete=True
+                    )
+                    .latest("pulp_created")
+                    .cast()
+                )
+            except ObjectDoesNotExist:
+                pass
         return repository, publication
 
     class Meta:
