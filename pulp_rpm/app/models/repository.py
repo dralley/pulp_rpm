@@ -6,7 +6,6 @@ from logging import getLogger
 
 from aiohttp.web_response import Response
 from django.conf import settings
-from django.core.exceptions import ObjectDoesNotExist
 from django.db import models
 from pulpcore.plugin.download import DownloaderFactory
 from pulpcore.plugin.models import (
@@ -530,7 +529,7 @@ class RpmDistribution(Distribution, AutoAddObjPermsMixin):
     def content_handler(self, path):
         """Serve config.repo and repomd.xml.key."""
         if self.generate_repo_config and path == self.repository_config_file_name:
-            repository, publication = self.get_repository_and_publication()
+            repository, _repo_version, publication = self.get_repository_publication_and_version()
             if not publication:
                 return
 
@@ -614,40 +613,6 @@ class RpmDistribution(Distribution, AutoAddObjPermsMixin):
         if self.generate_repo_config and rel_path == "":
             retval.add(self.repository_config_file_name)
         return retval
-
-    def get_repository_and_publication(self):
-        """Retrieves the repository and publication associated with this distribution if exists."""
-        repository = publication = None
-        if self.publication:
-            publication = self.publication.cast()
-            repository = publication.repository.cast()
-        elif self.repository:
-            repository = self.repository.cast()
-            versions = repository.versions.all()
-            publications = Publication.objects.filter(
-                repository_version__in=versions, complete=True
-            )
-            try:
-                publication = (
-                    publications.select_related("repository_version")
-                    .latest("repository_version", "pulp_created")
-                    .cast()
-                )
-            except ObjectDoesNotExist:
-                pass
-        elif self.repository_version:
-            repository = self.repository_version.repository.cast()
-            try:
-                publication = (
-                    Publication.objects.filter(
-                        repository_version=self.repository_version, complete=True
-                    )
-                    .latest("pulp_created")
-                    .cast()
-                )
-            except ObjectDoesNotExist:
-                pass
-        return repository, publication
 
     class Meta:
         default_related_name = "%(app_label)s_%(model_name)s"
