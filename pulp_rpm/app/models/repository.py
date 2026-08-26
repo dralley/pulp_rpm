@@ -197,7 +197,7 @@ class UlnRemote(Remote, AutoAddObjPermsMixin):
         ]
 
 
-def resolve_package_duplicates(new_version):
+def remove_package_duplicates(new_version):
     """Deduplicate packages that share NVRA but differ in other properties."""
     repo_key = Package.repo_key_fields
     is_incoming = Case(
@@ -445,7 +445,7 @@ class RpmRepository(Repository, AutoAddObjPermsMixin):
             except RepositoryVersion.DoesNotExist:
                 previous_version = None
 
-        resolve_package_duplicates(new_version)
+        remove_package_duplicates(new_version)
         remove_duplicates(new_version)
         self._resolve_distribution_trees(new_version, previous_version)
 

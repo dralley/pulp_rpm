@@ -7,24 +7,24 @@ from pulpcore.plugin.models import Content, Domain
 
 from pulp_rpm.app.models import Package
 from pulp_rpm.app.models.repository import RpmRepository
-from pulp_rpm.tests.functional.utils import MetaPackage, Nevra
-
-BLANK_FIELDS = {
-    "checksum_type": "sha256",
-    "summary": "",
-    "description": "",
-    "url": "",
-    "location_base": "",
-    "rpm_buildhost": "",
-    "rpm_group": "",
-    "rpm_license": "",
-    "rpm_packager": "",
-    "rpm_sourcerpm": "",
-    "rpm_vendor": "",
-}
+from pulp_rpm.tests.shared_utils import MetaPackage, Nevra
 
 
-def _create_package(domain, pkg):
+def _model_from_metapackage(domain, pkg: MetaPackage) -> Package:
+    """Create a MetaPackage from a pulp model Package."""
+    BLANK_FIELDS = {
+        "checksum_type": "sha256",
+        "summary": "",
+        "description": "",
+        "url": "",
+        "location_base": "",
+        "rpm_buildhost": "",
+        "rpm_group": "",
+        "rpm_license": "",
+        "rpm_packager": "",
+        "rpm_sourcerpm": "",
+        "rpm_vendor": "",
+    }
     nevra = pkg.nevra
     return Package.objects.create(
         name=nevra.name,
@@ -41,7 +41,8 @@ def _create_package(domain, pkg):
     )
 
 
-def _get_version_packages(version):
+def _metapackages_from_version(version) -> list[MetaPackage]:
+    """Build a list of MetaPackages representing content in a RepositoryVersion."""
     return [
         MetaPackage(
             Nevra(p.name, int(p.epoch), p.version, p.release, p.arch),
@@ -59,6 +60,7 @@ PENGUIN = MetaPackage(Nevra("penguin", 0, "1.0", "1.fc25", "x86_64"))
 @dataclasses.dataclass
 class DedupCase:
     id: str
+    description: str
     add_packages1: list[MetaPackage]
     expected1: list[MetaPackage]
     add_packages2: list[MetaPackage] | None = None
@@ -69,16 +71,19 @@ class DedupCase:
 CASES = [
     DedupCase(
         id="keeps-highest-epoch",
+        description="If two packages with different epochs are added, the one with higher epoch wins.",
         add_packages1=[WALRUS.replace(epoch=1), WALRUS.replace(epoch=5)],
         expected1=[WALRUS.replace(epoch=5)],
     ),
     DedupCase(
         id="no-duplicates-unchanged",
+        description="Packages with different names are not duplicates and remain unchanged.",
         add_packages1=[WALRUS.replace(epoch=1), PENGUIN.replace(epoch=1)],
         expected1=[PENGUIN.replace(epoch=1), WALRUS.replace(epoch=1)],
     ),
     DedupCase(
         id="multiple-groups-deduped-independently",
+        description="Multiple packages with duplicates are deduped independently by NEVRA.",
         add_packages1=[
             WALRUS.replace(epoch=1),
             WALRUS.replace(epoch=3),
@@ -89,6 +94,7 @@ CASES = [
     ),
     DedupCase(
         id="incoming-higher-replaces-existing",
+        description="Incoming package with higher epoch replaces existing package with same NVRA.",
         add_packages1=[WALRUS.replace(epoch=1)],
         expected1=[WALRUS.replace(epoch=1)],
         add_packages2=[WALRUS.replace(epoch=5)],
@@ -96,6 +102,7 @@ CASES = [
     ),
     DedupCase(
         id="incoming-lower-keeps-existing",
+        description="Incoming package with lower epoch is ignored, existing package is retained.",
         add_packages1=[WALRUS.replace(epoch=5)],
         expected1=[WALRUS.replace(epoch=5)],
         add_packages2=[WALRUS.replace(epoch=1)],
@@ -103,6 +110,7 @@ CASES = [
     ),
     DedupCase(
         id="incoming-into-multiple-groups",
+        description="When adding multiple packages, each competes independently with existing packages.",
         add_packages1=[WALRUS.replace(epoch=3), PENGUIN.replace(epoch=2)],
         expected1=[PENGUIN.replace(epoch=2), WALRUS.replace(epoch=3)],
         add_packages2=[WALRUS.replace(epoch=1), PENGUIN.replace(epoch=4)],
@@ -110,6 +118,7 @@ CASES = [
     ),
     DedupCase(
         id="incoming-same-epoch-higher-build-time-wins",
+        description="When epochs are equal, the package with the higher build time wins.",
         add_packages1=[
             WALRUS.replace(epoch=1, time_build=1000),
             WALRUS.replace(epoch=1, time_build=2000),
@@ -118,6 +127,7 @@ CASES = [
     ),
     DedupCase(
         id="incoming-same-epoch-higher-build-time-wins-reversed",
+        description="Build time tiebreaker is order-independent.",
         add_packages1=[
             WALRUS.replace(epoch=1, time_build=2000),
             WALRUS.replace(epoch=1, time_build=1000),
@@ -126,6 +136,7 @@ CASES = [
     ),
     DedupCase(
         id="all-tied-highest-pkgid-wins",
+        description="When epoch and build time are equal, the package with highest pkgId wins.",
         add_packages1=[
             WALRUS.replace(epoch=1, time_build=1000, digest="aaa"),
             WALRUS.replace(epoch=1, time_build=1000, digest="zzz"),
@@ -135,6 +146,10 @@ CASES = [
     ),
     DedupCase(
         id="incoming-same-epoch-keeps-incoming",
+        description=(
+            "On epoch conflict, incoming package takes precedence over existing regardless of build_time. "
+            "Here the incoming package has higher build_time."
+        ),
         add_packages1=[
             WALRUS.replace(epoch=1, time_build=1000),
         ],
@@ -146,6 +161,10 @@ CASES = [
     ),
     DedupCase(
         id="incoming-same-epoch-keeps-incoming-reversed",
+        description=(
+            "On epoch conflict, incoming package takes precedence over existing regardless of build_time. "
+            "Here the incoming package has lower build_time."
+        ),
         add_packages1=[
             WALRUS.replace(epoch=1, time_build=2000),
         ],
@@ -163,25 +182,25 @@ CASES = [
 def test_finalize_new_version_dedup(case: DedupCase):
     domain, _ = Domain.objects.get_or_create(name="default")
 
-    pkgs1 = [_create_package(domain, pkg) for pkg in case.add_packages1]
+    pkgs1 = [_model_from_metapackage(domain, pkg) for pkg in case.add_packages1]
     repo = RpmRepository.objects.create(name="test-repo", pulp_domain=domain)
     with repo.new_version() as version:
         version.add_content(Content.objects.filter(pk__in=[p.pk for p in pkgs1]))
 
     version.refresh_from_db()
     ign = () if case.compare_digest else ("digest",)
-    assert [p.ignore(*ign) for p in _get_version_packages(version)] == [
+    assert [p.ignore(*ign) for p in _metapackages_from_version(version)] == [
         p.ignore(*ign) for p in case.expected1
     ]
 
     if case.add_packages2 is None:
         return
 
-    pkgs2 = [_create_package(domain, pkg) for pkg in case.add_packages2]
+    pkgs2 = [_model_from_metapackage(domain, pkg) for pkg in case.add_packages2]
     with repo.new_version() as version:
         version.add_content(Content.objects.filter(pk__in=[p.pk for p in pkgs2]))
 
     latest = repo.latest_version()
-    assert [p.ignore(*ign) for p in _get_version_packages(latest)] == [
+    assert [p.ignore(*ign) for p in _metapackages_from_version(latest)] == [
         p.ignore(*ign) for p in case.expected2
     ]
