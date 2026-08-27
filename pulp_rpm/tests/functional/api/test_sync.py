@@ -68,8 +68,8 @@ from pulp_rpm.tests.functional.utils import (
     MetaPackage,
     PackageListFetcher,
     RepositoryBuilder,
-    normalized_location,
 )
+from pulp_rpm.tests.shared_utils import normalized_location
 
 
 @pytest.mark.parallel
